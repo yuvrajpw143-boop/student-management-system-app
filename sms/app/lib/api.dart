@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Set at build time: --dart-define=API_URL=https://your-api.example.com
-const apiBase = String.fromEnvironment('API_URL', defaultValue: 'http://localhost:3000');
+const apiBase = String.fromEnvironment('API_URL', defaultValue: 'https://student-management-system-app-production-aeca.up.railway.app');
 
 class Api {
   static String? token;

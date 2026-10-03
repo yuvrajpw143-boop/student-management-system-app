@@ -1,14 +1,44 @@
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs'), jwt = require('jsonwebtoken');
-const app = express(); app.use(cors(), express.json());
-const pool = mysql.createPool({ host: process.env.DB_HOST, port: +process.env.DB_PORT || 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+
+const app = express(); 
+app.use(cors(), express.json());
+
+// Dynamic Database Pool Configuration (Railway + Standard ENV Support)
+const dbHost = process.env.MYSQLHOST || process.env.DB_HOST || '127.0.0.1';
+const dbPort = +(process.env.MYSQLPORT || process.env.DB_PORT || 3306);
+const dbUser = process.env.MYSQLUSER || process.env.DB_USER || 'root';
+const dbPassword = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '';
+const dbName = process.env.MYSQLDATABASE || process.env.DB_NAME || '';
+const jwtSecret = process.env.JWT_SECRET || 'default_jwt_secret_key_change_me';
+
+const pool = mysql.createPool({ 
+  host: dbHost, 
+  port: dbPort, 
+  user: dbUser, 
+  password: dbPassword, 
+  database: dbName,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
 const h = f => (q, s, n) => f(q, s, n).catch(n);
 const bad = m => Object.assign(new Error(m), { status: 400 });
 const need = (o, ...k) => k.forEach(x => { if (o[x] === undefined || String(o[x]).trim() === '') throw bad(`${x} is required`); });
 const num = (v, x) => { if (isNaN(Number(v))) throw bad(`${x} must be a number`); return Number(v); };
-const sign = u => jwt.sign({ id: u.id, name: u.name }, process.env.JWT_SECRET, { expiresIn: '7d' });
-const auth = (q, s, n) => { try { q.user = jwt.verify((q.headers.authorization || '').slice(7), process.env.JWT_SECRET); n(); } catch { s.status(401).json({ error: 'Unauthorized' }); } };
+
+const sign = u => jwt.sign({ id: u.id, name: u.name }, jwtSecret, { expiresIn: '7d' });
+const auth = (q, s, n) => { 
+  try { 
+    q.user = jwt.verify((q.headers.authorization || '').slice(7), jwtSecret); 
+    n(); 
+  } catch { 
+    s.status(401).json({ error: 'Unauthorized' }); 
+  } 
+};
+
 const risk = (a, m) => (a < 60 || m < 40) ? 'High' : (a < 75 || m < 55) ? 'Medium' : 'Low';
 
 app.get('/api/health', h(async (q, s) => { await pool.query('SELECT 1'); s.json({ ok: true }); }));
@@ -20,6 +50,7 @@ app.post('/api/auth/register', h(async (q, s) => {
   const [r] = await pool.query('INSERT INTO users(name,email,password_hash) VALUES(?,?,?)', [q.body.name, q.body.email.toLowerCase(), await bcrypt.hash(q.body.password, 10)]);
   const u = { id: r.insertId, name: q.body.name }; s.status(201).json({ token: sign(u), user: u });
 }));
+
 app.post('/api/auth/login', h(async (q, s) => {
   need(q.body, 'email', 'password');
   const [[u]] = await pool.query('SELECT * FROM users WHERE email=?', [q.body.email.toLowerCase()]);
@@ -74,10 +105,24 @@ app.get('/api/dashboard', auth, h(async (q, s) => {
 }));
 
 app.use((q, s) => s.status(404).json({ error: 'Not found' }));
-app.use((e, q, s, n) => { const st = e.status || (e.code === 'ER_DUP_ENTRY' ? 409 : 500); if (st === 500) console.error(e); s.status(st).json({ error: e.code === 'ER_DUP_ENTRY' ? 'Duplicate value (already exists)' : st === 500 ? 'Server error' : e.message }); });
+app.use((e, q, s, n) => { 
+  const st = e.status || (e.code === 'ER_DUP_ENTRY' ? 409 : 500); 
+  if (st === 500) console.error(e); 
+  s.status(st).json({ error: e.code === 'ER_DUP_ENTRY' ? 'Duplicate value (already exists)' : st === 500 ? 'Server error' : e.message }); 
+});
 
 (async () => {
+  console.log(`[INFO] Attempting DB Connection to Host: ${dbHost}:${dbPort}, User: ${dbUser}, DB: ${dbName}`);
+  
   const [[{ n }]] = await pool.query('SELECT COUNT(*) n FROM users');
-  if (!n) { await pool.query('INSERT INTO users(name,email,password_hash) VALUES(?,?,?)', ['Admin', 'admin@school.com', await bcrypt.hash('admin123', 10)]); console.log('Demo user created: admin@school.com / admin123'); }
-  app.listen(process.env.PORT || 3000, () => console.log('API running on port ' + (process.env.PORT || 3000)));
-})().catch(e => { console.error('Startup failed (check DB settings):', e.message); process.exit(1); });
+  if (!n) { 
+    await pool.query('INSERT INTO users(name,email,password_hash) VALUES(?,?,?)', ['Admin', 'admin@school.com', await bcrypt.hash('admin123', 10)]); 
+    console.log('Demo user created: admin@school.com / admin123'); 
+  }
+  
+  const serverPort = process.env.PORT || 3000;
+  app.listen(serverPort, () => console.log('API running on port ' + serverPort));
+})().catch(e => { 
+  console.error('Startup failed (check DB settings):', e.message); 
+  process.exit(1); 
+});
