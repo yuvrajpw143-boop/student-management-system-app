@@ -1,0 +1,5 @@
+backend/.env
+node_modules/
+app/build/
+app/.dart_tool/
+app/.packages
